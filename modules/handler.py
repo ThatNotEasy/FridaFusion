@@ -413,7 +413,7 @@ class APKTool:
         self.logger.debug("Signing APK...")
         self.run_command("Signing APK", [
             "apksigner", "sign", "--ks", "FridaFussion.keystore", 
-            "--ks-key-alias", "my-alias", "--ks-pass", "pass:FridaFussion", 
+            "--ks-key-alias", "FridaFussion", "--ks-pass", "pass:FridaFussion", 
             "--key-pass", "pass:FridaFussion", f"{self.output_dir}_signed.apk"
         ])
         self.logger.debug(f"APK signed as {signed_apk}.")
