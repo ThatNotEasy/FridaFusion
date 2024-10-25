@@ -18,14 +18,7 @@ class APKTool:
         self.apk = apk
         self.proxy_cert = proxy_cert
         self.device_arch = device_arch
-        self.architectures = ['x86', 'x86_64', 'armeabi', 'armeabi-v7a', 'arm64-v8a', 'mips', 'mips64']
-        self.libraries = {
-            'armeabi-v7a': 'lib/armeabi-v7a/library.so',
-            'arm64-v8a': 'lib/arm64-v8a/library.so',
-            'x86': 'lib/x86/library.so',
-            'x86_64': 'lib/x86_64/library.so',
-            # Add other architectures as necessary
-        }
+        self.architectures = ['x86', 'x86_64', 'armeabi', 'armeabi-v7a', 'arm64-v8a', 'mips', 'mips64', 'arm64']
         self.package_name = None
         self.activity_name = None
         self.logger = setup_logging()
@@ -48,14 +41,6 @@ class APKTool:
         self.inject_frida_gadget(self.device_arch)
         modified_apk = f"modified_{os.path.basename(self.apk)}"
         self.logger.debug(f"Repackaging APK as {modified_apk}...")
-
-        try:
-            shutil.make_archive(modified_apk.replace('.apk', ''), 'zip', self.output_dir)
-            shutil.move(f"{modified_apk.replace('.apk', '')}.zip", modified_apk)
-            self.logger.debug("APK repackaged successfully.")
-        except Exception as e:
-            self.logger.error(f"Failed to repackage APK: {e}")
-            return
         
 # =================================================================================================================================== #
         
@@ -105,7 +90,8 @@ class APKTool:
             'armeabi-v7a': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-arm.so',
             'arm64-v8a': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-arm64.so',
             'x86': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-x86.so',
-            'x86_64': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-x86_64.so'
+            'x86_64': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-x86_64.so',
+            'arm64': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-arm64.so',
         }
         
         gadget = arch_to_gadget.get(self.device_arch)
@@ -158,7 +144,7 @@ class APKTool:
             self.run_command(f"{Fore.GREEN}GENERATING SELF-SIGNED CERTIFICATE: {Fore.YELLOW}{proxy_cert_path}{Fore.RESET}", [
                 "openssl", "req", "-x509", "-newkey", "rsa:2048", "-keyout", "private.key", 
                 "-out", proxy_cert_path, "-days", "365", "-nodes",
-                "-subj", "/CN=MyProxyCert"
+                "-subj", "/CN=FridaFussion"
             ])
             time.sleep(1)
             self.logger.debug(f"{Fore.GREEN}SELF-SIGNED CERTIFICATE GENERATION COMPLETE.{Fore.RESET}")
@@ -223,6 +209,10 @@ class APKTool:
         self.logger.debug(f"{Fore.GREEN}STARTING APP TAMPERING PROCESS...{Fore.RESET}")
 
         try:
+            self.modify_architecture()
+            time.sleep(1)
+            
+            
             self.modify_android_manifest(os.path.join(self.output_dir, "AndroidManifest.xml"))
             time.sleep(1)
             self.logger.debug(f"{Fore.GREEN}MODIFIED ANDROID MANIFEST SUCCESSFULLY.{Fore.RESET}")
@@ -382,7 +372,7 @@ class APKTool:
 # =================================================================================================================================== #
 
     def _build_apk(self):
-        self.run_command(f"{Fore.GREEN}BUILDING APKs: {Fore.YELLOW}{self.output_dir}{Fore.RESET}", ["apktool", "b", self.output_dir, "-o", f"{self.output_dir}-modified.apk"])
+        self.run_command(f"{Fore.GREEN}BUILDING APKs: {Fore.YELLOW}{self.output_dir}{Fore.RESET}", ["apktool", "b", self.output_dir, "-o", f"{self.output_dir}_rebuild.apk"])
 
 # =================================================================================================================================== #
 
@@ -390,10 +380,10 @@ class APKTool:
         """
         Zipalign the APK to optimize it for size and performance.
         """
-        zipaligned_apk = f"{self.output_dir}-zipaligned.apk"
+        zipaligned_apk = f"{self.output_dir}_rebuild.apk"
         self.logger.debug(f"{Fore.GREEN}ZIPALIGNED APK...{Fore.RESET}")
         time.sleep(1)
-        self.run_command("Zipaligning APK", ["zipalign", "-v", "-p", "4", f"{self.output_dir}-modified.apk", zipaligned_apk])
+        self.run_command("Zipaligning APK", ["zipalign", "-v", "-p", "4", f"{zipaligned_apk}", f"{self.output_dir}_zipaligned.apk"])
         self.logger.debug(f"{Fore.GREEN}APK ZIPALIGNED AS: {Fore.YELLOW}{zipaligned_apk}.{Fore.RESET}")
 
 # =================================================================================================================================== #
@@ -402,17 +392,17 @@ class APKTool:
         """
         Create a keystore for signing the APK.
         """
-        keystore_file = "my-release-key.keystore"
+        keystore_file = "FridaFussion.keystore"
         time.sleep(1)
         self.logger.debug(f"{Fore.GREEN}CREATING KEYSTORE: {Fore.YELLOW}{keystore_file}{Fore.RESET}")
         
         dname = '"CN=FridaFussion, OU=FridaFussion, O=FridaFussion, L=New York, S=NY, C=US"'
         
         self.run_command("Creating Keystore", [
-            "keytool", "-genkeypair", "-v", "-keystore", keystore_file, "-alias", "my-alias", 
+            "keytool", "-genkey", "-v", "-keystore", keystore_file, "-alias", "FridaFussion", 
             "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000", 
-            "-dname", dname,  # Use the formatted dname here
-            "-storepass", "password", "-keypass", "password"
+            "-dname", dname,
+            "-storepass", "FridaFussion", "-keypass", "FridaFussion"
         ])
         self.logger.debug(f"Keystore created as {keystore_file}.")
 
@@ -422,11 +412,11 @@ class APKTool:
         """
         Sign the APK using the created keystore.
         """
-        signed_apk = f"{self.output_dir}-signed.apk"
+        signed_apk = f"{self.output_dir}_zipaligned.apk"
         self.logger.debug("Signing APK...")
         self.run_command("Signing APK", [
-            "apksigner", "sign", "--ks", "my-release-key.keystore", 
-            "--ks-key-alias", "my-alias", "--ks-pass", "pass:password", 
-            "--key-pass", "pass:password", f"{self.output_dir}-zipaligned.apk"
+            "apksigner", "sign", "--ks", "FridaFussion.keystore", 
+            "--ks-key-alias", "my-alias", "--ks-pass", "pass:FridaFussion", 
+            "--key-pass", "pass:FridaFussion", f"{self.output_dir}_signed.apk"
         ])
         self.logger.debug(f"APK signed as {signed_apk}.")
