@@ -2,37 +2,139 @@ import os
 import sys
 import random
 import string
+import shutil
+import zipfile
+import time
+import subprocess
 from shutil import copyfile
 from xml.dom import minidom
 from .utils import read_lines, get_matching_files
+from xml.etree import ElementTree as ET
 from modules.logger import setup_logging
+from colorama import Fore
 
 class APKTool:
-    def __init__(self, apk, frida_gadget, device_arch, proxy_cert=None):
+    def __init__(self, apk, device_arch, proxy_cert=None):
         self.apk = apk
         self.proxy_cert = proxy_cert
-        self.frida_gadget = frida_gadget
         self.device_arch = device_arch
+        self.architectures = ['x86', 'x86_64', 'armeabi', 'armeabi-v7a', 'arm64-v8a', 'mips', 'mips64']
+        self.libraries = {
+            'armeabi-v7a': 'lib/armeabi-v7a/library.so',
+            'arm64-v8a': 'lib/arm64-v8a/library.so',
+            'x86': 'lib/x86/library.so',
+            'x86_64': 'lib/x86_64/library.so',
+            # Add other architectures as necessary
+        }
         self.package_name = None
         self.activity_name = None
         self.logger = setup_logging()
-        
-        # Extract the base name of the APK file for the output directory
         self.output_dir = os.path.splitext(self.apk)[0]
-        self.logger.debug(f"APKTool initialized with APK: {self.apk}, Frida Gadget: {self.frida_gadget}, Device Arch: {self.device_arch}")
+        self.frida_gadget = self.get_frida_gadget()
+        self.logger.debug(f"{Fore.GREEN}APK: {Fore.YELLOW}{self.apk} {Fore.RED}| {Fore.GREEN}GADGET: {Fore.YELLOW}{self.frida_gadget} {Fore.RED}| {Fore.GREEN}DEVICE: {Fore.YELLOW}{self.device_arch}{Fore.RESET}")
+        
+    def modify_architecture(self):
+        """ Modify the APK to support multiple architectures by adding the necessary libraries and injecting the Frida gadget. """
+        self.logger.debug("Unzipping APK...")
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        if self.device_arch not in self.architectures:
+            self.logger.error(f"Invalid device architecture: {self.device_arch}. Supported architectures are: {self.architectures}.")
+            return
+
+        arch_dir = os.path.join(self.output_dir, 'lib', self.device_arch)
+        os.makedirs(arch_dir, exist_ok=True)
+
+        self.inject_frida_gadget(self.device_arch)
+        modified_apk = f"modified_{os.path.basename(self.apk)}"
+        self.logger.debug(f"Repackaging APK as {modified_apk}...")
+
+        try:
+            shutil.make_archive(modified_apk.replace('.apk', ''), 'zip', self.output_dir)
+            shutil.move(f"{modified_apk.replace('.apk', '')}.zip", modified_apk)
+            self.logger.debug("APK repackaged successfully.")
+        except Exception as e:
+            self.logger.error(f"Failed to repackage APK: {e}")
+            return
+        
+# =================================================================================================================================== #
+        
+    def modify_android_manifest(self, manifest_path):
+        """ Modify the AndroidManifest.xml to ensure compatibility with various screen sizes and fake touch. """
+        if not os.path.isfile(manifest_path):
+            self.logger.error(f"AndroidManifest.xml not found at {manifest_path}.")
+            return
+
+        try:
+            tree = ET.parse(manifest_path)
+            root = tree.getroot()
+
+            # Ensure proper namespaces are set
+            if 'http://schemas.android.com/apk/res/android' not in root.tag:
+                self.logger.error("Invalid AndroidManifest.xml: missing namespace.")
+                return
+
+            supports_screens = ET.Element("supports-screens", {
+                "android:resizeable": "true",
+                "android:smallScreens": "true",
+                "android:normalScreens": "true",
+                "android:largeScreens": "true",
+                "android:xlargeScreens": "true",
+                "android:anyDensity": "true"
+            })
+            root.append(supports_screens)
+
+            uses_feature = ET.Element("uses-feature", {
+                "android:name": "android.hardware.faketouch",
+                "android:required": "false"
+            })
+            root.append(uses_feature)
+
+            tree.write(manifest_path)
+            self.logger.debug("Modified AndroidManifest.xml to support multiple screens and fake touch.")
+        except ET.ParseError as e:
+            self.logger.error(f"Failed to parse AndroidManifest.xml: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to modify AndroidManifest.xml: {e}")
+
+
+# =================================================================================================================================== #
+
+    def get_frida_gadget(self):
+        arch_to_gadget = {
+            'armeabi-v7a': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-arm.so',
+            'arm64-v8a': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-arm64.so',
+            'x86': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-x86.so',
+            'x86_64': f'gadget/{self.device_arch}/frida-gadget-16.5.6-android-x86_64.so'
+        }
+        
+        gadget = arch_to_gadget.get(self.device_arch)
+        if not gadget:
+            self.logger.error(f"No Frida gadget found for architecture: {self.device_arch}")
+            sys.exit(2)
+
+        if not os.path.isfile(gadget):
+            self.logger.error(f"Frida gadget file does not exist: {gadget}")
+            sys.exit(2)
+        
+        return gadget
+
+# =================================================================================================================================== #
 
     def run_command(self, description: str, command: list):
-        command_str = ' '.join(command)  # Join the command list into a string
-        self.logger.debug(f"Running command: {description} - {command_str}")
+        command_str = ' '.join(command)
+        # self.logger.debug(f"Running command: {description} - {command_str}")
         
         # Execute the command
         exit_code = os.system(command_str)  # Use os.system to run the command
 
         if exit_code == 0:
-            self.logger.debug("Command executed successfully.")
+            pass
         else:
             self.logger.error(f"Command failed with return code: {exit_code}")
             raise RuntimeError(f"Command '{command_str}' failed with return code: {exit_code}")
+        
+# =================================================================================================================================== #
 
     def convert_der_to_pem(self) -> str:
         proxy_cert_pem = "proxy-cert.pem"
@@ -42,16 +144,37 @@ class APKTool:
         self.logger.debug("Conversion complete.")
         return pem
 
+# =================================================================================================================================== #
+
     def generate_cert(self) -> str:
         """Generate DER certificate using OpenSSL."""
+        # Define the path for the proxy certificate
+        proxy_cert_path = "proxy-cert.pem"
+        if not os.path.isfile(proxy_cert_path):
+            self.logger.debug(f"{Fore.RED}PROXY CERTIFICATE NOT FOUND. {Fore.GREEN}GENERATING A NEW ONE...{Fore.RESET}")
+            time.sleep(1)
+
+            self.logger.debug(f"{Fore.GREEN}GENERATING SELF-SIGNED CERTIFICATE: {Fore.YELLOW}{proxy_cert_path}{Fore.RESET}")
+            self.run_command(f"{Fore.GREEN}GENERATING SELF-SIGNED CERTIFICATE: {Fore.YELLOW}{proxy_cert_path}{Fore.RESET}", [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-keyout", "private.key", 
+                "-out", proxy_cert_path, "-days", "365", "-nodes",
+                "-subj", "/CN=MyProxyCert"
+            ])
+            time.sleep(1)
+            self.logger.debug(f"{Fore.GREEN}SELF-SIGNED CERTIFICATE GENERATION COMPLETE.{Fore.RESET}")
+        
         if not self.proxy_cert:
-            self.logger.debug("Proxy certificate not provided.")
+            time.sleep(1)
+            self.logger.debug(f"{Fore.RED}PROXY CERTIFICATE NOT PROVIDED.{Fore.RESET}")
             return None
 
-        self.logger.debug("Generating certificate...")
-        self.run_command("Generating DER certificate", ["openssl", "x509", "-outform", "der", "-in", "proxy-cert.pem", "-out", self.proxy_cert])
-        self.logger.debug("Certificate generation complete.")
+        self.run_command(f"{Fore.GREEN}GENERATING DER CERTIFICATE: {Fore.YELLOW}{proxy_cert_path}{Fore.RESET}", [
+            "openssl", "x509", "-outform", "der", "-in", proxy_cert_path, "-out", self.proxy_cert
+        ])
+        self.logger.debug(f"{Fore.GREEN}CERTIFICATE GENERATION COMPLETE.{Fore.RESET}")
         return self.proxy_cert
+
+# =================================================================================================================================== #
 
     def _read_pem(self, pem_file):
         self.logger.debug(f"Reading PEM file: {pem_file}")
@@ -63,10 +186,14 @@ class APKTool:
         self.logger.debug("PEM read successfully.")
         return pem
 
+# =================================================================================================================================== #
+
     def decode_app(self):
-        self.run_command("Decoding APK", ["apktool", "d", f"{self.apk}", "-f", "-o", self.output_dir])
+        self.run_command(f"{Fore.GREEN}DECODING APKs{Fore.RESET}", ["apktool", "d", f"{self.apk}", "-f", "-o", self.output_dir])
         manifest_path = os.path.join(self.output_dir, "AndroidManifest.xml")
         self._parse_manifest(manifest_path)
+
+# =================================================================================================================================== #
 
     def tamper_yml(self):
         yml_file_path = os.path.join(self.output_dir, "apktool.yml")
@@ -81,40 +208,55 @@ class APKTool:
                 yml_file_updated.write(line)
         self.logger.debug("YML tampering complete.")
 
+# =================================================================================================================================== #
+
     def _increment_version_code(self, line):
         version_code = int(line.split(":")[1].strip().strip("'"))
         self.logger.debug(f"Incrementing version code from {version_code} to {version_code + 1}.")
         return version_code + 1
 
+# =================================================================================================================================== #
+
     def tamper_app(self, pem):
-        self.logger.debug("Starting app tampering process...")
+        """ Start the app tampering process. """
+        time.sleep(1)
+        self.logger.debug(f"{Fore.GREEN}STARTING APP TAMPERING PROCESS...{Fore.RESET}")
 
         try:
-            self._inject_frida_gadget()
-            self.logger.debug("Injected Frida gadget successfully.")
+            self.modify_android_manifest(os.path.join(self.output_dir, "AndroidManifest.xml"))
+            time.sleep(1)
+            self.logger.debug(f"{Fore.GREEN}MODIFIED ANDROID MANIFEST SUCCESSFULLY.{Fore.RESET}")
 
             self._inject_smali_hook()
-            self.logger.debug("Injected Smali hook successfully.")
+            time.sleep(1)
+            self.logger.debug(f"{Fore.GREEN}INJECTED SMALI HOOK SUCCESSFULLY.{Fore.RESET}")
 
+            # Build APK
             self._build_apk()
-            self.logger.debug("APK built successfully.")
+            time.sleep(1)
+            self.logger.debug(f"{Fore.GREEN}APK BUILT SUCCESSFULLY.{Fore.RESET}")
 
+            # Zipalign APK
             self._zipalign_apk()
-            self.logger.debug("APK zipaligned successfully.")
+            time.sleep(1)
+            self.logger.debug(f"{Fore.GREEN}APK ZIPALIGNED SUCCESSFULLY.{Fore.RESET}")
 
+            # Create keystore
             self._create_keystore()
-            self.logger.debug("Keystore created successfully.")
+            time.sleep(1)
+            self.logger.debug(f"{Fore.GREEN}KEYSTORE CREATED SUCCESSFULLY.{Fore.RESET}")
 
+            # Sign APK
             self._sign_apk()
-            self.logger.debug("APK signed successfully.")
-
-            self.logger.debug("[i] Finished tampering and signing!")
+            time.sleep(1)
+            self.logger.debug(f"{Fore.GREEN}APK SIGNED SUCCESSFULLY.{Fore.RESET}")
 
         except RuntimeError as e:
             self.logger.error(f"Error occurred during app tampering: {e}")
-            # Handle additional error cases based on your requirements
         except Exception as e:
             self.logger.error(f"An unexpected error occurred: {e}")
+
+# =================================================================================================================================== #
 
     def _parse_manifest(self, manifest_path):
         if not os.path.isfile(manifest_path):
@@ -124,14 +266,19 @@ class APKTool:
         self.package_name = xml_doc.documentElement.getAttribute("package")
         self.activity_name = self._find_main_activity(xml_doc)
 
+# =================================================================================================================================== #
+
     def _find_main_activity(self, xml_doc):
         activities = xml_doc.getElementsByTagName("activity")
         for activity in activities:
             if self._is_main_activity(activity):
-                self.logger.debug("Main activity found.")
+                time.sleep(1)
+                self.logger.debug(f"{Fore.GREEN}MAIN ACTIVITY FOUND: {Fore.YELLOW}{activity.getAttribute('android:name')}{Fore.RESET}")
                 return activity.getAttribute("android:name")
         self.logger.debug("Main activity not found! Aborting...")
         sys.exit(2)
+
+# =================================================================================================================================== #
 
     def _is_main_activity(self, activity):
         intent_filter = activity.getElementsByTagName("intent-filter")
@@ -140,53 +287,69 @@ class APKTool:
             return any(action.getAttribute("android:name") == "android.intent.action.MAIN" for action in actions)
         return False
 
-    def _inject_frida_gadget(self):
-        if os.path.exists(self.frida_gadget):
-            lib_path = os.path.join(self.output_dir, "lib", self.device_arch)
-            os.makedirs(lib_path, exist_ok=True)
-            copyfile(self.frida_gadget, os.path.join(lib_path, "libfrida-gadget.so"))
-            self.logger.debug("Frida gadget injected successfully.")
+# =================================================================================================================================== #
+
+    def inject_frida_gadget(self, arch):
+        """ Inject Frida gadget into the APK for the specified architecture. """
+        lib_path = os.path.join(self.output_dir, "lib", arch)
+        destination = os.path.join(lib_path, "libfrida-gadget.so")
+        frida_gadget = self.get_frida_gadget()
+        if os.path.exists(frida_gadget):
+            copyfile(frida_gadget, destination)
+            self.logger.debug(f"{Fore.GREEN}GADGET INJECTED TO: {Fore.YELLOW}{frida_gadget} {Fore.RED}| {Fore.YELLOW}{lib_path}{Fore.RESET}")
         else:
-            self.logger.debug("Frida gadget file not found! Aborting...")
+            self.logger.error(f"Frida gadget file not found! Aborting for architecture: {arch}")
             sys.exit(2)
+
+# =================================================================================================================================== #
 
     def _inject_smali_hook(self):
         smali_file_path = self._find_smali_file()
         self._patch_smali_file(smali_file_path)
+
+# =================================================================================================================================== #
 
     def _find_smali_file(self):
         class_name = self.activity_name.split(".")[-1]
         pattern = f'*{class_name}.smali'
         matches = get_matching_files(self.output_dir, pattern)
         if matches:
-            self.logger.debug("Smali file found.")
+            self.logger.debug(f"{Fore.GREEN}SMALI FILE FOUND: {Fore.YELLOW}{matches}{Fore.RESET}")
             return matches[0]
         self.logger.debug(f"Main activity [{self.activity_name}] not found! Aborting...")
         sys.exit(2)
 
+# =================================================================================================================================== #
+
     def _patch_smali_file(self, smali_file_path):
-        self.logger.debug("Injecting smali hook...")
+        self.logger.debug(f"{Fore.GREEN}INJECTING SMALI HOOK...{Fore.RESET}")
         lines = read_lines(smali_file_path)
         patched_lines = self._get_patched_smali_lines(lines)
 
         with open(smali_file_path, 'w') as smali_file_updated:
             smali_file_updated.writelines(patched_lines)
-        self.logger.debug("Smali hook injection complete.")
+        self.logger.debug(f"{Fore.GREEN}SMALI HOOK INJECTION COMPLETED.{Fore.RESET}")
+
+# =================================================================================================================================== #
 
     def _get_patched_smali_lines(self, lines):
         patched = False
         patched_lines = []
         for line in lines:
             if self._should_patch(line, patched):
-                self.logger.debug("Patching smali line.")
+                self.logger.debug(f"{Fore.GREEN}PATCHING SMALI LINE.{Fore.RESET}")
                 patched_lines.append(self._get_injected_lines(line, lines))
                 patched = True
             else:
                 patched_lines.append(line)
         return patched_lines
 
+# =================================================================================================================================== #
+
     def _should_patch(self, line, patched):
         return (".method static constructor" in line or ".method public constructor" in line) and not patched
+
+# =================================================================================================================================== #
 
     def _get_injected_lines(self, line, lines):
         next_line = lines[lines.index(line) + 1]
@@ -203,6 +366,8 @@ class APKTool:
         else:
             return line + frida_gadget_line + frida_lib_call_line
 
+# =================================================================================================================================== #
+
     def _update_locals(self, next_line):
         new_locals_number = 1
         if ".locals" in next_line:
@@ -211,31 +376,57 @@ class APKTool:
             next_line = next_line.replace(str(locals_number), str(new_locals_number))
         else:
             next_line = f"    .locals {new_locals_number}"
-        self.logger.debug(f"Updated locals number to {new_locals_number}.")
+        self.logger.debug(f"{Fore.GREEN}UPDATED LOCALS NUMBER TO: {Fore.YELLOW}{new_locals_number}{Fore.RESET}.")
         return new_locals_number, next_line
 
+# =================================================================================================================================== #
+
     def _build_apk(self):
-        self.run_command("Building APK", ["apktool", "b", self.output_dir, "-o", f"{self.output_dir}-modified.apk"])
+        self.run_command(f"{Fore.GREEN}BUILDING APKs: {Fore.YELLOW}{self.output_dir}{Fore.RESET}", ["apktool", "b", self.output_dir, "-o", f"{self.output_dir}-modified.apk"])
+
+# =================================================================================================================================== #
 
     def _zipalign_apk(self):
-        self.run_command("Zipaligning APK", ["zipalign", "-v", "4", f"{self.output_dir}-modified.apk", f"{self.output_dir}-aligned.apk"])
+        """
+        Zipalign the APK to optimize it for size and performance.
+        """
+        zipaligned_apk = f"{self.output_dir}-zipaligned.apk"
+        self.logger.debug(f"{Fore.GREEN}ZIPALIGNED APK...{Fore.RESET}")
+        time.sleep(1)
+        self.run_command("Zipaligning APK", ["zipalign", "-v", "-p", "4", f"{self.output_dir}-modified.apk", zipaligned_apk])
+        self.logger.debug(f"{Fore.GREEN}APK ZIPALIGNED AS: {Fore.YELLOW}{zipaligned_apk}.{Fore.RESET}")
+
+# =================================================================================================================================== #
 
     def _create_keystore(self):
+        """
+        Create a keystore for signing the APK.
+        """
         keystore_file = "my-release-key.keystore"
-        self.logger.debug("Creating keystore...")
+        time.sleep(1)
+        self.logger.debug(f"{Fore.GREEN}CREATING KEYSTORE: {Fore.YELLOW}{keystore_file}{Fore.RESET}")
+        
+        dname = '"CN=FridaFussion, OU=FridaFussion, O=FridaFussion, L=New York, S=NY, C=US"'
+        
+        self.run_command("Creating Keystore", [
+            "keytool", "-genkeypair", "-v", "-keystore", keystore_file, "-alias", "my-alias", 
+            "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000", 
+            "-dname", dname,  # Use the formatted dname here
+            "-storepass", "password", "-keypass", "password"
+        ])
+        self.logger.debug(f"Keystore created as {keystore_file}.")
 
-        # Check if the alias already exists
-        check_command = f'keytool -list -keystore "{keystore_file}" -storepass "password"'
-        if os.system(check_command) == 0:
-            self.logger.error(f"Alias 'my-key-alias' already exists. Please use a different alias or delete the existing one.")
-            return  # Exit or raise an exception as needed
-
-        command = f'keytool -genkey -v -keystore "{keystore_file}" -alias "my-key-alias" -storepass "password" -keypass "password" -keyalg RSA -dname "CN=YourName, OU=YourOrgUnit, O=YourOrg, L=YourCity, S=YourState, C=YourCountry"'
-        exit_code = os.system(command)
-        if exit_code != 0:
-            self.logger.error(f"Command '{command}' failed with return code: {exit_code}")
-            raise RuntimeError(f"Command '{command}' failed with return code: {exit_code}")
-        self.logger.info("Keystore created successfully.")
+# =================================================================================================================================== #
 
     def _sign_apk(self):
-        self.run_command("Signing APK", ["jarsigner", "-verbose", "-sigalg", "SHA1withRSA", "-digestalg", "SHA1", f"{self.output_dir}-aligned.apk", "my-key-alias", "-keystore", "my-release-key.keystore", "-storepass", "password"])
+        """
+        Sign the APK using the created keystore.
+        """
+        signed_apk = f"{self.output_dir}-signed.apk"
+        self.logger.debug("Signing APK...")
+        self.run_command("Signing APK", [
+            "apksigner", "sign", "--ks", "my-release-key.keystore", 
+            "--ks-key-alias", "my-alias", "--ks-pass", "pass:password", 
+            "--key-pass", "pass:password", f"{self.output_dir}-zipaligned.apk"
+        ])
+        self.logger.debug(f"APK signed as {signed_apk}.")
