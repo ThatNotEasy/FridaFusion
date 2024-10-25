@@ -372,9 +372,11 @@ class APKTool:
         """
         signed_apk = f"{self.output_dir}_zipaligned.apk"
         keystore = "FridaFussion.keystore"
+        keystore_password = "FridaFussion"  # Replace with the actual password or securely fetch it
         self.logger.debug("Signing APK...")
         self.run_command("Signing APK", [
-            "apksigner", "sign", "--ks", keystore, "--v1-signing-enabled", "true", "--v2-signing-enabled", "true",
-            f"{self.output_dir}_zipaligned.apk"
+            "apksigner", "sign", "--ks", keystore, "--ks-pass", f"pass:{keystore_password}", 
+            "--v1-signing-enabled", "true", "--v2-signing-enabled", "true",
+            signed_apk
         ])
         self.logger.debug(f"APK signed as {signed_apk}.")
