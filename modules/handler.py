@@ -173,7 +173,7 @@ class APKTool:
 # =================================================================================================================================== #
 
     def decode_app(self):
-        self.run_command(f"{Fore.GREEN}DECODING APKs{Fore.RESET}", ["apktool", "d", f"{self.apk}", "-f", "-o", self.output_dir])
+        self.run_command(f"{Fore.GREEN}DECODING APKs{Fore.RESET}", ["apktool", "d", "-r", "-s", f"{self.apk}", "-o", self.output_dir])
         manifest_path = os.path.join(self.output_dir, "AndroidManifest.xml")
         self._parse_manifest(manifest_path)
 
@@ -369,7 +369,7 @@ class APKTool:
 # =================================================================================================================================== #
 
     def _build_apk(self):
-        self.run_command(f"{Fore.GREEN}BUILDING APKs: {Fore.YELLOW}{self.output_dir}{Fore.RESET}", ["apktool", "b", self.output_dir, "-o", f"{self.output_dir}_rebuild.apk"])
+        self.run_command(f"{Fore.GREEN}BUILDING APKs: {Fore.YELLOW}{self.output_dir}{Fore.RESET}", ["apktool", "b", self.output_dir])
 
 # =================================================================================================================================== #
 
@@ -377,10 +377,10 @@ class APKTool:
         """
         Zipalign the APK to optimize it for size and performance.
         """
-        zipaligned_apk = f"{self.output_dir}_rebuild.apk"
+        zipaligned_apk = f"{self.output_dir}/dist/{self.output_dir}.apk"
         self.logger.debug(f"{Fore.GREEN}ZIPALIGNED APK...{Fore.RESET}")
         time.sleep(1)
-        self.run_command("Zipaligning APK", ["zipalign", "-v", "-p", "4", f"{zipaligned_apk}", f"{self.output_dir}_zipaligned.apk"])
+        self.run_command("Zipaligning APK", ["zipalign", "-v", "4", f"{zipaligned_apk}", f"{self.output_dir}_zipaligned.apk"])
         self.logger.debug(f"{Fore.GREEN}APK ZIPALIGNED AS: {Fore.YELLOW}{zipaligned_apk}.{Fore.RESET}")
 
 # =================================================================================================================================== #
@@ -410,10 +410,10 @@ class APKTool:
         Sign the APK using the created keystore.
         """
         signed_apk = f"{self.output_dir}_zipaligned.apk"
+        keystore = "FridaFussion.keystore"
         self.logger.debug("Signing APK...")
         self.run_command("Signing APK", [
-            "apksigner", "sign", "--ks", "FridaFussion.keystore", 
-            "--ks-key-alias", "FridaFussion", "--ks-pass", "pass:FridaFussion", 
-            "--key-pass", "pass:FridaFussion", f"{self.output_dir}_signed.apk"
+            "apksigner", "sign", "--ks", keystore, "--v1-signing-enabled", "true", "--v2-signing-enabled", "true",
+            f"{self.output_dir}_zipaligned.apk"
         ])
         self.logger.debug(f"APK signed as {signed_apk}.")
