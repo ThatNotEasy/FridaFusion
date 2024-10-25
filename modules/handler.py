@@ -38,9 +38,7 @@ class APKTool:
         arch_dir = os.path.join(self.output_dir, 'lib', self.device_arch)
         os.makedirs(arch_dir, exist_ok=True)
 
-        self.inject_frida_gadget(self.device_arch)
-        modified_apk = f"modified_{os.path.basename(self.apk)}"
-        self.logger.debug(f"Repackaging APK as {modified_apk}...")
+        return self.inject_frida_gadget(self.device_arch)
         
 # =================================================================================================================================== #
         
@@ -283,10 +281,9 @@ class APKTool:
         """ Inject Frida gadget into the APK for the specified architecture. """
         lib_path = os.path.join(self.output_dir, "lib", arch)
         destination = os.path.join(lib_path, "libfrida-gadget.so")
-        frida_gadget = self.get_frida_gadget()
-        if os.path.exists(frida_gadget):
-            copyfile(frida_gadget, destination)
-            self.logger.debug(f"{Fore.GREEN}GADGET INJECTED TO: {Fore.YELLOW}{frida_gadget} {Fore.RED}| {Fore.YELLOW}{lib_path}{Fore.RESET}")
+        if os.path.exists(self.frida_gadget):
+            copyfile(self.frida_gadget, destination)
+            self.logger.debug(f"{Fore.GREEN}GADGET INJECTED TO: {Fore.YELLOW}{self.frida_gadget} {Fore.RED}| {Fore.YELLOW}{lib_path}{Fore.RESET}")
         else:
             self.logger.error(f"Frida gadget file not found! Aborting for architecture: {arch}")
             sys.exit(2)
