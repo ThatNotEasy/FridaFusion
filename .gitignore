@@ -3,3 +3,5 @@ my-release-key.keystore
 proxy-cert.key
 proxy-cert.pem
 secrets_output.json
+FridaFussion.keystore
+private.key
