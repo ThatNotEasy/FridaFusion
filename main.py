@@ -22,7 +22,6 @@ def main():
 
     apk_tool = APKTool(args.target_apk, args.device_arch, args.proxy_cert)
     pem = apk_tool.generate_cert()
-    apk_tool.decode_app()
     apk_tool.tamper_app(pem)
 
 if __name__ == "__main__":

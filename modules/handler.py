@@ -39,46 +39,6 @@ class APKTool:
         os.makedirs(arch_dir, exist_ok=True)
 
         return self.inject_frida_gadget(self.device_arch)
-        
-# =================================================================================================================================== #
-        
-    def modify_android_manifest(self, manifest_path):
-        """ Modify the AndroidManifest.xml to ensure compatibility with various screen sizes and fake touch. """
-        if not os.path.isfile(manifest_path):
-            self.logger.error(f"AndroidManifest.xml not found at {manifest_path}.")
-            return
-
-        try:
-            tree = ET.parse(manifest_path)
-            root = tree.getroot()
-
-            # Ensure proper namespaces are set
-            if 'http://schemas.android.com/apk/res/android' not in root.tag:
-                self.logger.error("Invalid AndroidManifest.xml: missing namespace.")
-                return
-
-            supports_screens = ET.Element("supports-screens", {
-                "android:resizeable": "true",
-                "android:smallScreens": "true",
-                "android:normalScreens": "true",
-                "android:largeScreens": "true",
-                "android:xlargeScreens": "true",
-                "android:anyDensity": "true"
-            })
-            root.append(supports_screens)
-
-            uses_feature = ET.Element("uses-feature", {
-                "android:name": "android.hardware.faketouch",
-                "android:required": "false"
-            })
-            root.append(uses_feature)
-
-            tree.write(manifest_path)
-            self.logger.debug("Modified AndroidManifest.xml to support multiple screens and fake touch.")
-        except ET.ParseError as e:
-            self.logger.error(f"Failed to parse AndroidManifest.xml: {e}")
-        except Exception as e:
-            self.logger.error(f"Failed to modify AndroidManifest.xml: {e}")
 
 
 # =================================================================================================================================== #
@@ -173,7 +133,7 @@ class APKTool:
 # =================================================================================================================================== #
 
     def decode_app(self):
-        self.run_command(f"{Fore.GREEN}DECODING APKs{Fore.RESET}", ["apktool", "d", "-r", "-s", f"{self.apk}", "-o", self.output_dir])
+        self.run_command(f"{Fore.GREEN}DECODING APKs{Fore.RESET}", ["apktool", "d", f"{self.apk}", "-f", "-o", self.output_dir])
         manifest_path = os.path.join(self.output_dir, "AndroidManifest.xml")
         self._parse_manifest(manifest_path)
 
@@ -207,22 +167,21 @@ class APKTool:
         self.logger.debug(f"{Fore.GREEN}STARTING APP TAMPERING PROCESS...{Fore.RESET}")
 
         try:
+            self.decode_app()
+            time.sleep(1)
+            
             self.modify_architecture()
             time.sleep(1)
-            
-            
-            self.modify_android_manifest(os.path.join(self.output_dir, "AndroidManifest.xml"))
-            time.sleep(1)
-            self.logger.debug(f"{Fore.GREEN}MODIFIED ANDROID MANIFEST SUCCESSFULLY.{Fore.RESET}")
+            self.logger.debug(f"{Fore.GREEN}APK MODIFIED SUCCESSFULLY.{Fore.RESET}")
 
             self._inject_smali_hook()
             time.sleep(1)
             self.logger.debug(f"{Fore.GREEN}INJECTED SMALI HOOK SUCCESSFULLY.{Fore.RESET}")
 
             # Build APK
-            self._build_apk()
+            self.recompile_apk()
             time.sleep(1)
-            self.logger.debug(f"{Fore.GREEN}APK BUILT SUCCESSFULLY.{Fore.RESET}")
+            self.logger.debug(f"{Fore.GREEN}APK RECOMPILE SUCCESSFULLY.{Fore.RESET}")
 
             # Zipalign APK
             self._zipalign_apk()
@@ -368,7 +327,7 @@ class APKTool:
 
 # =================================================================================================================================== #
 
-    def _build_apk(self):
+    def recompile_apk(self):
         self.run_command(f"{Fore.GREEN}BUILDING APKs: {Fore.YELLOW}{self.output_dir}{Fore.RESET}", ["apktool", "b", self.output_dir])
 
 # =================================================================================================================================== #
@@ -377,10 +336,12 @@ class APKTool:
         """
         Zipalign the APK to optimize it for size and performance.
         """
-        zipaligned_apk = f"{self.output_dir}/dist/{self.output_dir}.apk"
+        recompile_apk = f"{self.output_dir}/dist/{self.output_dir}.apk"
+        zipaligned_apk = f"{self.output_dir}/dist/{self.output_dir}_zipaligned.apk"
+        
         self.logger.debug(f"{Fore.GREEN}ZIPALIGNED APK...{Fore.RESET}")
         time.sleep(1)
-        self.run_command("Zipaligning APK", ["zipalign", "-v", "4", f"{zipaligned_apk}", f"{self.output_dir}_zipaligned.apk"])
+        self.run_command("Zipaligning APK", ["zipalign", "-v", "4", f"{recompile_apk}", f"{zipaligned_apk}"])
         self.logger.debug(f"{Fore.GREEN}APK ZIPALIGNED AS: {Fore.YELLOW}{zipaligned_apk}.{Fore.RESET}")
 
 # =================================================================================================================================== #
